@@ -204,9 +204,28 @@ class TestIO(unittest.TestCase):
       if validated: passed += 1
     self.assertEqual(passed, len(SCHEMAS_TO_VALIDATE))
 
+  def testValidateNested(self):
+    example_schema = """\
+    {"type": "record",
+     "name": "a",
+     "fields": [
+      {"name": "field1", "type": {
+        "type": "record", "name": "b", "fields": [
+          {"name": "field2", "type": "null"},
+          {"name": "field3", "type": "int"}
+        ]}
+        }
+     ]
+    }
+    """
+    datum = {"field1": {"field2": "aaaaa", "field3": 1234}}
+
+    avro_io.Validate(schema.Parse(example_schema), datum)
+
   def testRoundTrip(self):
     correct = 0
     for example_schema, datum in SCHEMAS_TO_VALIDATE:
+      print(example_schema, datum)
       logging.debug('Schema: %s', example_schema)
       logging.debug('Datum: %s', datum)
 
