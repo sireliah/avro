@@ -68,37 +68,31 @@ STRUCT_DOUBLE = struct.Struct('!d')  # big-endian double
 STRUCT_CRC32 = struct.Struct('>I')   # big-endian unsigned int
 
 
+class TermColors:
+  BLUE = '\033[94m'
+  GREEN = '\033[92m'
+  FAIL = '\033[91m'
+  ENDC = '\033[0m'
+
+
 # ------------------------------------------------------------------------------
 # Exceptions
 
-
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-
-class AvroPrimitiveException(schema.AvroException):
+class AvroPrimitiveTypeException(schema.AvroException):
   def __init__(self, details, expected_schema, datum):
-    pretty_expected = json.dumps(json.loads(str(expected_schema)), indent=2)
     pretty_datum = pformat(datum, indent=1, width=1)
-    fail_msg = f'\n{bcolors.FAIL}{pretty_datum}{bcolors.ENDC} {details}' \
-               f'\n  expected schema: {bcolors.OKGREEN}{pretty_expected}{bcolors.ENDC}'
+    fail_msg = f'{details}, but as value we got {TermColors.FAIL}{pretty_datum}{TermColors.ENDC}\n'
     schema.AvroException.__init__(self, fail_msg)
+
 
 class AvroTypeException(schema.AvroException):
   """Raised when datum is not an example of schema."""
   def __init__(self, expected_schema, datum, details=[]):
     pretty_expected = json.dumps(json.loads(str(expected_schema)), indent=2)
     pretty_datum = pformat(datum, indent=1, width=1)
-    fail_msg = "The datum doesn't match schema type"
-    fail_msg += f"\n\nDatum:\n{bcolors.FAIL}{pretty_datum}{bcolors.ENDC}"
-    fail_msg += f"\n\nSchema:\n{bcolors.OKGREEN}{pretty_expected}{bcolors.ENDC}"
+    fail_msg = "The datum is not an example of the schema"
+    fail_msg += f"\n\nDatum:\n{TermColors.FAIL}{pretty_datum}{TermColors.ENDC}"
+    fail_msg += f"\n\nSchema:\n{TermColors.GREEN}{pretty_expected}{TermColors.ENDC}"
     for d in details:
       fail_msg += f"\n\n{d}"
     schema.AvroException.__init__(self, fail_msg)
@@ -120,26 +114,32 @@ class SchemaResolutionException(schema.AvroException):
 def validate_datum_type(datum, expected_types, expected_schema):
   if None in expected_types:
     if datum is not None:
-      raise AvroPrimitiveException(
-        f'is not {bcolors.OKBLUE}None{bcolors.ENDC}',
+      raise AvroPrimitiveTypeException(
+        f'should be {TermColors.BLUE}None{TermColors.ENDC}',
         expected_schema, datum
       )
   elif not isinstance(datum, expected_types):
-    expected_types_names = f'{bcolors.ENDC} nor {bcolors.OKBLUE}'.join([t.__name__ for t in expected_types])
-    raise AvroPrimitiveException(
-      f'is not {bcolors.OKBLUE}{expected_types_names}{bcolors.ENDC}',
+    expected_types_names = f'{TermColors.ENDC} nor {TermColors.BLUE}'.join(
+      [t.__name__ for t in expected_types]
+    )
+    raise AvroPrimitiveTypeException(
+      f'should be {TermColors.BLUE}{expected_types_names}{TermColors.ENDC} type',
       expected_schema, datum
     )
 
 
-def Validate(expected_schema, datum):
-  """Determines if a python datum is an instance of a schema.
+def validate(expected_schema, datum):
+  """
+  Determines if a python datum is an instance of a schema.
 
   Args:
     expected_schema: Schema to validate against.
     datum: Datum to validate.
-  Returns:
-    True if the datum is an instance of the schema.
+  Exceptions:
+    AvroPrimitiveTypeException: validation errors on primitive data types
+     such as: bool, int, long, float, string, etc.
+    AvroTypeException: errors with aggregated all AvroPrimitiveTypeExceptions
+
   """
   error_aggregate = []
 
@@ -154,16 +154,16 @@ def Validate(expected_schema, datum):
     validate_datum_type(datum, (bytes,), expected_schema)
   elif schema_type == 'int':
     validate_datum_type(datum, (int,), expected_schema)
-    if not INT_MIN_VALUE <= datum <= INT_MAX_VALUE:
-      raise AvroPrimitiveException(
-        f'is not within int range ({INT_MIN_VALUE}, {INT_MAX_VALUE})',
+    if not (INT_MIN_VALUE <= datum <= INT_MAX_VALUE):
+      raise AvroPrimitiveTypeException(
+        f'should be within int range ({INT_MIN_VALUE}, {INT_MAX_VALUE})',
         expected_schema, datum
       )
   elif schema_type == 'long':
     validate_datum_type(datum, (int,), expected_schema)
-    if not LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE:
-      raise AvroPrimitiveException(
-        f'is not within int range ({LONG_MIN_VALUE}, {LONG_MAX_VALUE})',
+    if not (LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE):
+      raise AvroPrimitiveTypeException(
+        f'should be within int range ({LONG_MIN_VALUE}, {LONG_MAX_VALUE})',
         expected_schema, datum
       )
   elif schema_type in ['float', 'double']:
@@ -171,56 +171,72 @@ def Validate(expected_schema, datum):
   elif schema_type == 'fixed':
     validate_datum_type(datum, (bytes,), expected_schema)
     if not len(datum) == expected_schema.size:
-      raise AvroPrimitiveException(
-        f'does not have expected size: {expected_schema.size}',
+      raise AvroPrimitiveTypeException(
+        f'should have expected size: {expected_schema.size}',
         expected_schema, datum
       )
   elif schema_type == 'enum':
     if datum not in expected_schema.symbols:
-      raise AvroPrimitiveException(
-        f'does not seem to be example of symbol: {expected_schema.symbols}',
+      raise AvroPrimitiveTypeException(
+        f'should be one of symbols: {expected_schema.symbols}',
         expected_schema, datum
       )
   elif schema_type == 'array':
     validate_datum_type(datum, (list,), expected_schema)
     for item in datum:
       try:
-        Validate(expected_schema.items, item)
-      except AvroPrimitiveException as e:
+        validate(expected_schema.items, item)
+      except AvroPrimitiveTypeException as e:
         error_aggregate.append(str(e))
 
   elif schema_type == 'map':
     validate_datum_type(datum, (dict,), expected_schema)
-
     for key, value in datum.items():
       try:
         validate_datum_type(key, (str,), expected_schema)
-        Validate(expected_schema.values, value)
-      except AvroPrimitiveException as e:
+        validate(expected_schema.values, value)
+      except AvroPrimitiveTypeException as e:
         error_aggregate.append(str(e))
 
   elif schema_type in ['union', 'error_union']:
     for union_branch in expected_schema.schemas:
       try:
-        success = Validate(union_branch, datum)
-      except AvroPrimitiveException as e:
+        success = validate(union_branch, datum)
+      except AvroPrimitiveTypeException as e:
         pass
     if not success:
-      error_aggregate.append(f'{datum} is not one of following: f{union_branch}')
+      error_aggregate.append(f'{datum} should be one of following: f{union_branch}')
 
   elif schema_type in ['record', 'error', 'request']:
     validate_datum_type(datum, (dict,), expected_schema)
     for field in expected_schema.fields:
       try:
-        Validate(field.type, datum.get(field.name))
-      except AvroPrimitiveException as e:
-        error_aggregate.append(str(e))
+        validate(field.type, datum.get(field.name))
+      except AvroPrimitiveTypeException as e:
+        error_aggregate.append(f'Field {TermColors.GREEN}"{field.name}"{TermColors.ENDC} {e}')
   else:
     raise AvroTypeException('Unknown Avro schema type: %r' % schema_type)
 
   if error_aggregate:
     raise AvroTypeException(expected_schema, datum, details=error_aggregate)
 
+  return True
+
+
+def validate_wrapper(expected_schema, datum):
+  """
+  Provides validation interface that doesn't raise avro validation exceptions.
+
+  Args:
+    expected_schema: Schema to validate against.
+    datum: Datum to validate.
+  Returns:
+    True if the datum is an instance of the schema.
+  """
+  try:
+    validate(expected_schema, datum)
+  except (AvroTypeException, AvroPrimitiveTypeException):
+    return False
   return True
 
 # ------------------------------------------------------------------------------
@@ -886,7 +902,7 @@ class DatumWriter(object):
 
   def write(self, datum, encoder):
     # validate datum
-    if not Validate(self.writer_schema, datum):
+    if not validate(self.writer_schema, datum):
       raise AvroTypeException(self.writer_schema, datum)
 
     self.write_data(self.writer_schema, datum, encoder)
@@ -992,7 +1008,7 @@ class DatumWriter(object):
     # resolve union
     index_of_schema = -1
     for i, candidate_schema in enumerate(writer_schema.schemas):
-      if Validate(candidate_schema, datum):
+      if validate_wrapper(candidate_schema, datum):
         index_of_schema = i
     if index_of_schema < 0: raise AvroTypeException(writer_schema, datum)
 
