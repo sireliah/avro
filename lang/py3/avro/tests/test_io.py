@@ -199,7 +199,7 @@ class TestIO(unittest.TestCase):
     for example_schema, datum in SCHEMAS_TO_VALIDATE:
       logging.debug('Schema: %r', example_schema)
       logging.debug('Datum: %r', datum)
-      validated = avro_io.Validate(schema.Parse(example_schema), datum)
+      validated = avro_io.validate(schema.Parse(example_schema), datum)
       logging.debug('Valid: %s', validated)
       if validated: passed += 1
     self.assertEqual(passed, len(SCHEMAS_TO_VALIDATE))
@@ -211,21 +211,49 @@ class TestIO(unittest.TestCase):
      "fields": [
       {"name": "field1", "type": {
         "type": "record", "name": "b", "fields": [
-          {"name": "field2", "type": "null"},
+          {"name": "field2", "type": "long"},
           {"name": "field3", "type": "int"}
         ]}
         }
      ]
     }
     """
-    datum = {"field1": {"field2": "aaaaa", "field3": 1234}}
+    datum = {"field1": {"field2": 11, "field3": 11}}
 
-    avro_io.Validate(schema.Parse(example_schema), datum)
+    avro_io.validate(schema.Parse(example_schema), datum)
+
+  def testValidateShouldRaiseFormattedError(self):
+    example_schema = '{"type": "int"}'
+    datum = "aaa"
+
+    expected_regex = "datum should be \\033\[94mint\\033\[0m type," \
+                     " but as value we got \\033\[91m'aaa'\\033\[0m"
+
+    with self.assertRaisesRegexp(avro_io.AvroPrimitiveTypeException, expected_regex):
+      avro_io.validate(schema.Parse(example_schema), datum)
+
+  def testValidateNestedShouldRaiseFormattedError(self):
+    example_schema = """\
+    {"type": "record",
+     "name": "a",
+     "fields": [
+      {"name": "field1", "type": {
+        "type": "array", "items": "int"}
+        }
+     ]
+    }
+    """
+    datum = {"field1": {"field2": "11", "field3": []}}
+
+    expected_regex = 'Field \\033\[92m"field1"\\033\[0m' \
+                     ' datum should be \\033\[94mlist\\033\[0m type'
+
+    with self.assertRaisesRegexp(avro_io.AvroTypeException, expected_regex):
+      avro_io.validate(schema.Parse(example_schema), datum)
 
   def testRoundTrip(self):
     correct = 0
     for example_schema, datum in SCHEMAS_TO_VALIDATE:
-      print(example_schema, datum)
       logging.debug('Schema: %s', example_schema)
       logging.debug('Datum: %s', datum)
 
