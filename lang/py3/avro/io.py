@@ -199,13 +199,19 @@ def validate(expected_schema, datum):
         error_aggregate.append(str(e))
 
   elif schema_type in ['union', 'error_union']:
+    union_success = False
     for union_branch in expected_schema.schemas:
       try:
-        success = validate(union_branch, datum)
-      except AvroPrimitiveTypeException as e:
+        validate(union_branch, datum)
+        union_success = True
+      except AvroPrimitiveTypeException:
         pass
-    if not success:
-      error_aggregate.append(f'datum {datum} should be one of following: f{union_branch}')
+    if not union_success:
+      union_branches = [schema.type for schema in expected_schema.schemas]
+      error_aggregate.append(
+        f'datum should be one of following: ' \
+        f'{TermColors.BLUE}{union_branches}{TermColors.ENDC}'
+      )
 
   elif schema_type in ['record', 'error', 'request']:
     validate_datum_type(datum, (dict,), expected_schema)

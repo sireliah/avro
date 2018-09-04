@@ -222,6 +222,25 @@ class TestIO(unittest.TestCase):
 
     avro_io.validate(schema.Parse(example_schema), datum)
 
+  def testValidateUnion(self):
+    example_schema = """\
+    ["int", "null"]
+    """
+    datum = None
+    avro_io.validate(schema.Parse(example_schema), datum)
+
+  def testValidateUnionError(self):
+    example_schema = """\
+    ["int", "null"]
+    """
+    datum = "there should not be a string here"
+
+    expected_regex = "datum should be one of following: "\
+                     "\\033\[94m\['int', 'null'\]\\033\[0m"
+
+    with self.assertRaisesRegexp(avro_io.AvroTypeException, expected_regex):
+      avro_io.validate(schema.Parse(example_schema), datum)
+
   def testValidateShouldRaiseFormattedError(self):
     example_schema = '{"type": "int"}'
     datum = "aaa"
