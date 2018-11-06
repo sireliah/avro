@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------------------
 # Constants
 
-
 INT_MIN_VALUE = -(1 << 31)
 INT_MAX_VALUE = (1 << 31) - 1
 LONG_MIN_VALUE = -(1 << 63)
@@ -69,11 +68,11 @@ STRUCT_CRC32 = struct.Struct('>I')   # big-endian unsigned int
 
 
 class TermColors:
-  BLUE = '\033[94m'
-  GREEN = '\033[92m'
-  RED = '\033[91m'
-  ENDC = '\033[0m'
-
+  tty = sys.stdout.isatty()
+  BLUE = '\033[94m' if tty else ''
+  GREEN = '\033[92m' if tty else ''
+  RED = '\033[91m' if tty else ''
+  ENDC = '\033[0m' if tty else ''
 
 # ------------------------------------------------------------------------------
 # Exceptions
