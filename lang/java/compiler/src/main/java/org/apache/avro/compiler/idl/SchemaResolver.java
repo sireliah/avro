@@ -17,13 +17,13 @@
  */
 package org.apache.avro.compiler.idl;
 
-import com.google.common.base.Function;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.apache.avro.Protocol;
 import org.apache.avro.Schema;
@@ -107,13 +107,13 @@ final class SchemaResolver {
       if (value.isOneWay()) {
         Schema replacement = resolve(replacements, value.getRequest(), protocol);
         nvalue = result.createMessage(value.getName(), value.getDoc(),
-            value.getObjectProps(), replacement);
+            value, replacement);
       } else {
         Schema request = resolve(replacements, value.getRequest(), protocol);
         Schema response = resolve(replacements, value.getResponse(), protocol);
         Schema errors = resolve(replacements, value.getErrors(), protocol);
         nvalue = result.createMessage(value.getName(), value.getDoc(),
-            value.getObjectProps(), request, response, errors);
+            value, request, response, errors);
       }
       result.getMessages().put(entry.getKey(), nvalue);
     }

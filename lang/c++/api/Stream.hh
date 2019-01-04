@@ -75,6 +75,31 @@ public:
     virtual size_t byteCount() const = 0;
 };
 
+/** 
+ * An InputStream which also supports seeking to a specific offset.
+ */
+class AVRO_DECL SeekableInputStream : public InputStream {
+protected:
+
+    /**
+     * An empty constuctor.
+     */
+    SeekableInputStream() { }
+
+public:
+    /**
+     * Destructor.
+     */
+    virtual ~SeekableInputStream() { }
+
+    /**
+     * Seek to a specific position in the stream. This may invalidate pointers
+     * returned from next(). This will also reset byteCount() to the given
+     * position.
+     */
+    virtual void seek(int64_t position) = 0;
+};
+
 /**
  * A no-copy output stream.
  */
@@ -122,14 +147,14 @@ public:
 /**
  * Returns a new OutputStream, which grows in memory chunks of specified size.
  */
-AVRO_DECL std::auto_ptr<OutputStream> memoryOutputStream(size_t chunkSize = 4 * 1024);
+AVRO_DECL std::unique_ptr<OutputStream> memoryOutputStream(size_t chunkSize = 4 * 1024);
 
 /**
  * Returns a new InputStream, with the data from the given byte array.
  * It does not copy the data, the byte array should remain valid
  * until the InputStream is used.
  */
-AVRO_DECL std::auto_ptr<InputStream> memoryInputStream(const uint8_t* data, size_t len);
+AVRO_DECL std::unique_ptr<InputStream> memoryInputStream(const uint8_t* data, size_t len);
 
 /**
  * Returns a new InputStream with the contents written into an
@@ -138,7 +163,7 @@ AVRO_DECL std::auto_ptr<InputStream> memoryInputStream(const uint8_t* data, size
  * input stream are the snapshot of the outputstream. One can construct
  * any number of memory input stream from a single memory output stream.
  */
-AVRO_DECL std::auto_ptr<InputStream> memoryInputStream(const OutputStream& source);
+AVRO_DECL std::unique_ptr<InputStream> memoryInputStream(const OutputStream& source);
 
 /**
  * Returns the contents written so far into the output stream, which should
@@ -154,22 +179,24 @@ AVRO_DECL boost::shared_ptr<std::vector<uint8_t> > snapshot(const OutputStream& 
  * If there is a file with the given name, it is truncated and overwritten.
  * If there is no file with the given name, it is created.
  */
-AVRO_DECL std::auto_ptr<OutputStream> fileOutputStream(const char* filename,
+AVRO_DECL std::unique_ptr<OutputStream> fileOutputStream(const char* filename,
     size_t bufferSize = 8 * 1024);
 
 /**
  * Returns a new InputStream whose contents come from the given file.
  * Data is read in chunks of given buffer size.
  */
-AVRO_DECL std::auto_ptr<InputStream> fileInputStream(const char* filename,
-    size_t bufferSize = 8 * 1024);
+AVRO_DECL std::unique_ptr<InputStream> fileInputStream(
+    const char *filename, size_t bufferSize = 8 * 1024);
+AVRO_DECL std::unique_ptr<SeekableInputStream> fileSeekableInputStream(
+    const char *filename, size_t bufferSize = 8 * 1024);
 
 /**
  * Returns a new OutputStream whose contents will be sent to the given
  * std::ostream. The std::ostream object should outlive the returned
  * OutputStream.
  */
-AVRO_DECL std::auto_ptr<OutputStream> ostreamOutputStream(std::ostream& os,
+AVRO_DECL std::unique_ptr<OutputStream> ostreamOutputStream(std::ostream& os,
     size_t bufferSize = 8 * 1024);
 
 /**
@@ -177,8 +204,8 @@ AVRO_DECL std::auto_ptr<OutputStream> ostreamOutputStream(std::ostream& os,
  * std::istream. The std::istream object should outlive the returned
  * InputStream.
  */
-AVRO_DECL std::auto_ptr<InputStream> istreamInputStream(std::istream& in,
-    size_t bufferSize = 8 * 1024);
+AVRO_DECL std::unique_ptr<InputStream> istreamInputStream(
+    std::istream &in, size_t bufferSize = 8 * 1024);
 
 /** A convenience class for reading from an InputStream */
 struct StreamReader {

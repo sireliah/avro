@@ -24,6 +24,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
@@ -36,13 +37,14 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
-import com.google.common.collect.MapMaker;
 import org.apache.avro.AvroRemoteException;
 import org.apache.avro.AvroRuntimeException;
 import org.apache.avro.AvroTypeException;
 import org.apache.avro.Conversion;
+import org.apache.avro.JsonProperties;
 import org.apache.avro.LogicalType;
 import org.apache.avro.Protocol;
 import org.apache.avro.Protocol.Message;
@@ -58,14 +60,12 @@ import org.apache.avro.io.DatumWriter;
 import org.apache.avro.specific.FixedSize;
 import org.apache.avro.specific.SpecificData;
 import org.apache.avro.SchemaNormalization;
-import org.codehaus.jackson.JsonNode;
-import org.codehaus.jackson.node.NullNode;
-
-import com.thoughtworks.paranamer.CachingParanamer;
-import com.thoughtworks.paranamer.Paranamer;
 
 /** Utilities to use existing Java classes and interfaces via reflection. */
 public class ReflectData extends SpecificData {
+  @Override
+  public boolean useCustomCoders() { return false; }
+
   /** {@link ReflectData} implementation that permits null field values.  The
    * schema generated for each field is a union of its declared type and
    * null. */
@@ -232,14 +232,23 @@ public class ReflectData extends SpecificData {
     }
   }
 
-  static final ConcurrentHashMap<Class<?>, ClassAccessorData>
-    ACCESSOR_CACHE = new ConcurrentHashMap<>();
+  static final ClassValue<ClassAccessorData>
+    ACCESSOR_CACHE = new ClassValue<ClassAccessorData>() {
+      @Override
+      protected ClassAccessorData computeValue(Class<?> c) {
+        if (!IndexedRecord.class.isAssignableFrom(c)){
+          return new ClassAccessorData(c);
+        }
+        return null;
+      }
+  };
 
   static class ClassAccessorData {
     private final Class<?> clazz;
     private final Map<String, FieldAccessor> byName =
         new HashMap<>();
-    final Map<Schema, FieldAccessor[]> bySchema = new MapMaker().weakKeys().makeMap();
+    //getAccessorsFor is already synchronized, no need to wrap
+    final Map<Schema, FieldAccessor[]> bySchema = new WeakHashMap<>();
 
     private ClassAccessorData(Class<?> c) {
       clazz = c;
@@ -260,6 +269,7 @@ public class ReflectData extends SpecificData {
      * index of the given schema.
      */
     private synchronized FieldAccessor[] getAccessorsFor(Schema schema) {
+      //if synchronized is removed from this method, adjust bySchema appropriately
       FieldAccessor[] result = bySchema.get(schema);
       if (result == null) {
         result = createAccessorsFor(schema);
@@ -288,15 +298,7 @@ public class ReflectData extends SpecificData {
   }
 
   private ClassAccessorData getClassAccessorData(Class<?> c) {
-    ClassAccessorData data = ACCESSOR_CACHE.get(c);
-    if(data == null && !IndexedRecord.class.isAssignableFrom(c)){
-      ClassAccessorData newData = new ClassAccessorData(c);
-      data = ACCESSOR_CACHE.putIfAbsent(c, newData);
-      if (null == data) {
-        data = newData;
-      }
-    }
-    return data;
+    return ACCESSOR_CACHE.get(c);
   }
 
   private FieldAccessor[] getFieldAccessors(Class<?> c, Schema s) {
@@ -572,6 +574,8 @@ public class ReflectData extends SpecificData {
       String fullName = c.getName();
       Schema schema = names.get(fullName);
       if (schema == null) {
+        AvroDoc annotatedDoc = c.getAnnotation(AvroDoc.class);    // Docstring
+        String doc = (annotatedDoc != null) ? annotatedDoc.value() : null;
         String name = c.getSimpleName();
         String space = c.getPackage() == null ? "" : c.getPackage().getName();
         if (c.getEnclosingClass() != null)                   // nested class
@@ -588,18 +592,18 @@ public class ReflectData extends SpecificData {
           Enum[] constants = (Enum[])c.getEnumConstants();
           for (int i = 0; i < constants.length; i++)
             symbols.add(constants[i].name());
-          schema = Schema.createEnum(name, null /* doc */, space, symbols);
+          schema = Schema.createEnum(name, doc, space, symbols);
           consumeAvroAliasAnnotation(c, schema);
         } else if (GenericFixed.class.isAssignableFrom(c)) { // fixed
           int size = c.getAnnotation(FixedSize.class).value();
-          schema = Schema.createFixed(name, null /* doc */, space, size);
+          schema = Schema.createFixed(name, doc, space, size);
           consumeAvroAliasAnnotation(c, schema);
         } else if (IndexedRecord.class.isAssignableFrom(c)) { // specific
           return super.createSchema(type, names);
         } else {                                             // record
           List<Schema.Field> fields = new ArrayList<>();
           boolean error = Throwable.class.isAssignableFrom(c);
-          schema = Schema.createRecord(name, null /* doc */, space, error);
+          schema = Schema.createRecord(name, doc, space, error);
           consumeAvroAliasAnnotation(c, schema);
           names.put(c.getName(), schema);
           for (Field field : getCachedFields(c))
@@ -608,15 +612,17 @@ public class ReflectData extends SpecificData {
               Schema fieldSchema = createFieldSchema(field, names);
               AvroDefault defaultAnnotation
                 = field.getAnnotation(AvroDefault.class);
-              JsonNode defaultValue = (defaultAnnotation == null)
+              Object defaultValue = (defaultAnnotation == null)
                 ? null
-                : Schema.parseJson(defaultAnnotation.value());
+                : Schema.parseJsonToObject(defaultAnnotation.value());
+              annotatedDoc = field.getAnnotation(AvroDoc.class);    // Docstring
+              doc = (annotatedDoc != null) ? annotatedDoc.value() : null;
 
               if (defaultValue == null
                   && fieldSchema.getType() == Schema.Type.UNION) {
                 Schema defaultType = fieldSchema.getTypes().get(0);
                 if (defaultType.getType() == Schema.Type.NULL) {
-                  defaultValue = NullNode.getInstance();
+                  defaultValue = JsonProperties.NULL_VALUE;
                 }
               }
               AvroName annotatedName = field.getAnnotation(AvroName.class);       // Rename fields
@@ -624,7 +630,7 @@ public class ReflectData extends SpecificData {
                 ? annotatedName.value()
                 : field.getName();
               Schema.Field recordField
-                = new Schema.Field(fieldName, fieldSchema, null, defaultValue);
+                = new Schema.Field(fieldName, fieldSchema, doc, defaultValue);
 
               AvroMeta meta = field.getAnnotation(AvroMeta.class);              // add metadata
               if (meta != null)
@@ -757,11 +763,11 @@ public class ReflectData extends SpecificData {
     return schema;
   }
 
-  /** Return the protocol for a Java interface.
-   * <p>Note that this requires that <a
-   * href="http://paranamer.codehaus.org/">Paranamer</a> is run over compiled
-   * interface declarations, since Java 6 reflection does not provide access to
-   * method parameter names.  See Avro's build.xml for an example. */
+  /**
+   * Return the protocol for a Java interface.
+   * <p>The correct name of the method parameters needs the <code>-parameters</code>
+   * java compiler argument. More info at https://openjdk.java.net/jeps/118
+   */
   @Override
   public Protocol getProtocol(Class iface) {
     Protocol protocol =
@@ -786,12 +792,19 @@ public class ReflectData extends SpecificData {
     return protocol;
   }
 
-  private final Paranamer paranamer = new CachingParanamer();
+  private String[] getParameterNames(Method m) {
+    Parameter[] parameters = m.getParameters();
+    String[] paramNames = new String[parameters.length];
+    for (int i = 0; i < parameters.length; i++) {
+      paramNames[i] = parameters[i].getName();
+    }
+    return paramNames;
+  }
 
   private Message getMessage(Method method, Protocol protocol,
                              Map<String,Schema> names) {
     List<Schema.Field> fields = new ArrayList<>();
-    String[] paramNames = paranamer.lookupParameterNames(method);
+    String[] paramNames = getParameterNames(method);
     Type[] paramTypes = method.getGenericParameterTypes();
     Annotation[][] annotations = method.getParameterAnnotations();
     for (int i = 0; i < paramTypes.length; i++) {
